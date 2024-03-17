@@ -1,11 +1,13 @@
 import time
 import os
+import json
 import random
 import numpy as np
 import torch
 import torch.utils.data
 
 import commons 
+import librosa
 from mel_processing import spectrogram_torch
 from utils import load_wav_to_torch, load_filepaths_and_text
 from text import text_to_sequence, cleaned_text_to_sequence
@@ -33,6 +35,9 @@ class TextAudioLoader(torch.utils.data.Dataset):
         self.min_text_len = getattr(hparams, "min_text_len", 1)
         self.max_text_len = getattr(hparams, "max_text_len", 190)
 
+        self.TibetData = getattr(hparams, "Tibet", False)
+        self.Tibet_phonemes_json = getattr(hparams, "Tibet_phoneme_json", False)
+
         random.seed(1234)
         random.shuffle(self.audiopaths_and_text)
         self._filter()
@@ -51,7 +56,9 @@ class TextAudioLoader(torch.utils.data.Dataset):
         for audiopath, text in self.audiopaths_and_text:
             if self.min_text_len <= len(text) and len(text) <= self.max_text_len:
                 audiopaths_and_text_new.append([audiopath, text])
-                lengths.append(os.path.getsize(audiopath) // (2 * self.hop_length))
+                # lengths.append(os.path.getsize(audiopath) // (2 * self.hop_length))匪夷所思的计算
+                wav, _ = librosa.load(audiopath, sr=self.sampling_rate)
+                lengths.append(wav.size // self.hop_length)
         self.audiopaths_and_text = audiopaths_and_text_new
         self.lengths = lengths
 
@@ -63,12 +70,12 @@ class TextAudioLoader(torch.utils.data.Dataset):
         return (text, spec, wav)
 
     def get_audio(self, filename):
-        audio, sampling_rate = load_wav_to_torch(filename)
+        audio, sampling_rate = load_wav_to_torch(filename, self.sampling_rate)
         if sampling_rate != self.sampling_rate:
             raise ValueError("{} {} SR doesn't match target {} SR".format(
                 sampling_rate, self.sampling_rate))
-        audio_norm = audio / self.max_wav_value
-        audio_norm = audio_norm.unsqueeze(0)
+        # audio_norm = audio / self.max_wav_value
+        audio_norm = audio.unsqueeze(0)
         spec_filename = filename.replace(".wav", ".spec.pt")
         if os.path.exists(spec_filename):
             spec = torch.load(spec_filename)
@@ -81,12 +88,18 @@ class TextAudioLoader(torch.utils.data.Dataset):
         return spec, audio_norm
 
     def get_text(self, text):
-        if self.cleaned_text:
-            text_norm = cleaned_text_to_sequence(text)
+        if self.TibetData:
+            with open(self.Tibet_phonemes_json, "r") as fi:
+                phoemes_name_to_id = json.load(fi)
+            text_norm = [phoemes_name_to_id[key] for key in text.split()]
         else:
-            text_norm = text_to_sequence(text, self.text_cleaners)
-        if self.add_blank:
-            text_norm = commons.intersperse(text_norm, 0)
+
+            if self.cleaned_text:
+                text_norm = cleaned_text_to_sequence(text)
+            else:
+                text_norm = text_to_sequence(text, self.text_cleaners)
+            if self.add_blank:
+                text_norm = commons.intersperse(text_norm, 0)
         text_norm = torch.LongTensor(text_norm)
         return text_norm
 

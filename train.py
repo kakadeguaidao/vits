@@ -13,6 +13,9 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.cuda.amp import autocast, GradScaler
 
+import warnings
+warnings.filterwarnings('ignore')
+
 import commons
 import utils
 from data_utils import (
@@ -47,8 +50,10 @@ def main():
   os.environ['MASTER_PORT'] = '54321'
 
   hps = utils.get_hparams()
-  # mp.spawn(run, nprocs=n_gpus, args=(n_gpus, hps,))
-  run(rank=0, n_gpus=n_gpus, hps=hps,)
+  if torch.cuda.device_count() > 1:
+    mp.spawn(run, nprocs=n_gpus, args=(n_gpus, hps,))
+  else:
+    run(rank=0, n_gpus=n_gpus, hps=hps,)
 
 def run(rank, n_gpus, hps):
   global global_step
@@ -81,7 +86,7 @@ def run(rank, n_gpus, hps):
         drop_last=False, collate_fn=collate_fn)
 
   net_g = SynthesizerTrn(
-      len(symbols),
+      40 if hps.data.Tibet else len(symbols),
       hps.data.filter_length // 2 + 1,
       hps.train.segment_size // hps.data.hop_length,
       **hps.model).cuda(rank)

@@ -37,7 +37,7 @@ if __name__ == "__main__":
                     phoneme = item[index]
                     index += 1
                 
-                if not phonemes.get(phoneme):
+                if phonemes.get(phoneme) == None:
                     phonemes[phoneme] = phonemes_id
                     phonemes_id += 1
     
