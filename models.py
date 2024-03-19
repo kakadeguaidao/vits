@@ -10,8 +10,10 @@ import attentions
 import monotonic_align
 
 from torch.nn import Conv1d, ConvTranspose1d, AvgPool1d, Conv2d
+from gst.gst import StyleEncoder
 from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
 from commons import init_weights, get_padding
+from mel_processing import spec_to_mel_torch
 
 
 class StochasticDurationPredictor(nn.Module):
@@ -141,7 +143,8 @@ class TextEncoder(nn.Module):
       n_heads,
       n_layers,
       kernel_size,
-      p_dropout):
+      p_dropout,
+      **kwargs):
     super().__init__()
     self.n_vocab = n_vocab
     self.out_channels = out_channels
@@ -155,6 +158,13 @@ class TextEncoder(nn.Module):
     self.emb = nn.Embedding(n_vocab, hidden_channels)
     nn.init.normal_(self.emb.weight, 0.0, hidden_channels**-0.5)
 
+    if kwargs.get("use_gst"):
+       self.use_gst = True
+       del kwargs["use_gst"]
+       self.style_encoder = StyleEncoder(gst_tokens = 4, gst_token_dim = hidden_channels)
+    else:
+       self.use_gst = False
+
     self.encoder = attentions.Encoder(
       hidden_channels,
       filter_channels,
@@ -164,9 +174,13 @@ class TextEncoder(nn.Module):
       p_dropout)
     self.proj= nn.Conv1d(hidden_channels, out_channels * 2, 1)
 
-  def forward(self, x, x_lengths):
+  def forward(self, x, x_lengths, spec = None):
     x = self.emb(x) * math.sqrt(self.hidden_channels) # [b, t, h]
+    if self.use_gst:
+       style_embedding = self.style_encoder(spec.permute(0,2,1))
+       x = x + style_embedding.unsqueeze(dim=1)
     x = torch.transpose(x, 1, -1) # [b, h, t]
+
     x_mask = torch.unsqueeze(commons.sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
 
     x = self.encoder(x * x_mask, x_mask)
@@ -443,7 +457,8 @@ class SynthesizerTrn(nn.Module):
         n_heads,
         n_layers,
         kernel_size,
-        p_dropout)
+        p_dropout,
+        **kwargs)
     self.dec = Generator(inter_channels, resblock, resblock_kernel_sizes, resblock_dilation_sizes, upsample_rates, upsample_initial_channel, upsample_kernel_sizes, gin_channels=gin_channels)
     self.enc_q = PosteriorEncoder(spec_channels, inter_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels)
     self.flow = ResidualCouplingBlock(inter_channels, hidden_channels, 5, 1, 4, gin_channels=gin_channels)
@@ -457,8 +472,8 @@ class SynthesizerTrn(nn.Module):
       self.emb_g = nn.Embedding(n_speakers, gin_channels)
 
   def forward(self, x, x_lengths, y, y_lengths, sid=None):
-
-    x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths)
+    mel = spec_to_mel_torch(y, n_fft=1024,num_mels=80,sampling_rate=24000, fmin=0, fmax=12000)
+    x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, mel)
     if self.n_speakers > 0:
       g = self.emb_g(sid).unsqueeze(-1) # [b, h, 1]
     else:
@@ -496,8 +511,9 @@ class SynthesizerTrn(nn.Module):
     o = self.dec(z_slice, g=g)
     return o, l_length, attn, ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q)
 
-  def infer(self, x, x_lengths, sid=None, noise_scale=1, length_scale=1, noise_scale_w=1., max_len=None):
-    x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths)
+  def infer(self, x, x_lengths, spec = None, sid=None, noise_scale=1, length_scale=1, noise_scale_w=1., max_len=None):
+    mel = spec_to_mel_torch(spec, n_fft=1024,num_mels=80,sampling_rate=24000, fmin=0, fmax=12000)
+    x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, mel)
     if self.n_speakers > 0:
       g = self.emb_g(sid).unsqueeze(-1) # [b, h, 1]
     else:

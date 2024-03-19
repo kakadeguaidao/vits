@@ -369,6 +369,6 @@ if __name__ == "__main__":
     model = StyleEncoder(gst_tokens=4)
     device = torch.device("cuda:0")
     model = model.to(device)
-    input = torch.randn(2, 80, 100).to(device)
+    input = torch.randn(2, 100, 80).to(device)
     output = model(input)
     print(output.shape)

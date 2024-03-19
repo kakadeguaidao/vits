@@ -7,8 +7,8 @@ SPECIAL_MARK = ["'", "+", "."]
 if __name__ == "__main__":
 
     args = argparse.ArgumentParser()
-    args.add_argument("--input_data_path",type=str)
-    args.add_argument("--outputdir",type=str)
+    args.add_argument("--input_data_path",type=str,required=True)
+    args.add_argument("--outputdir",type=str,required=True)
     args = args.parse_args()
     data_path = args.input_data_path
     data_path = Path(data_path)
