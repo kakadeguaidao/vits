@@ -186,6 +186,9 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
 
         random.seed(1234)
         random.shuffle(self.audiopaths_sid_text)
+
+        self.aishell3 = getattr(hparams, "aishell3", False)
+        self.aishell3_phoneme = getattr(hparams, "aishell3_phoneme", False)
         self._filter()
 
     def _filter(self):
@@ -201,7 +204,8 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         for audiopath, sid, text in self.audiopaths_sid_text:
             if self.min_text_len <= len(text) and len(text) <= self.max_text_len:
                 audiopaths_sid_text_new.append([audiopath, sid, text])
-                lengths.append(os.path.getsize(audiopath) // (2 * self.hop_length))
+                wav, _ = librosa.load(audiopath, sr=self.sampling_rate)
+                lengths.append(wav.size // self.hop_length)
         self.audiopaths_sid_text = audiopaths_sid_text_new
         self.lengths = lengths
 
@@ -214,12 +218,12 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         return (text, spec, wav, sid)
 
     def get_audio(self, filename):
-        audio, sampling_rate = load_wav_to_torch(filename)
+        audio, sampling_rate = load_wav_to_torch(filename, sr=self.sampling_rate)
         if sampling_rate != self.sampling_rate:
             raise ValueError("{} {} SR doesn't match target {} SR".format(
                 sampling_rate, self.sampling_rate))
-        audio_norm = audio / self.max_wav_value
-        audio_norm = audio_norm.unsqueeze(0)
+        # audio_norm = audio / self.max_wav_value
+        audio_norm = audio.unsqueeze(0)
         spec_filename = filename.replace(".wav", ".spec.pt")
         if os.path.exists(spec_filename):
             spec = torch.load(spec_filename)
@@ -232,12 +236,18 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         return spec, audio_norm
 
     def get_text(self, text):
-        if self.cleaned_text:
-            text_norm = cleaned_text_to_sequence(text)
+        if self.aishell3:
+            with open(self.aishell3_phoneme, "r") as fi:
+                phoemes_name_to_id = json.load(fi)
+            text_norm = [phoemes_name_to_id[key] for key in text.split()]
         else:
-            text_norm = text_to_sequence(text, self.text_cleaners)
-        if self.add_blank:
-            text_norm = commons.intersperse(text_norm, 0)
+            if self.cleaned_text:
+                text_norm = cleaned_text_to_sequence(text)
+            else:
+                text_norm = text_to_sequence(text, self.text_cleaners)
+            if self.add_blank:
+                text_norm = commons.intersperse(text_norm, 0)
+
         text_norm = torch.LongTensor(text_norm)
         return text_norm
 

@@ -44,10 +44,13 @@ def main():
 
   n_gpus = torch.cuda.device_count()
   os.environ['MASTER_ADDR'] = 'localhost'
-  os.environ['MASTER_PORT'] = '80000'
+  os.environ['MASTER_PORT'] = '54321'
 
   hps = utils.get_hparams()
-  mp.spawn(run, nprocs=n_gpus, args=(n_gpus, hps,))
+  if torch.cuda.device_count() > 1:
+    mp.spawn(run, nprocs=n_gpus, args=(n_gpus, hps,))
+  else:
+    run(rank=0, n_gpus=n_gpus, hps=hps,)
 
 
 def run(rank, n_gpus, hps):
@@ -81,7 +84,7 @@ def run(rank, n_gpus, hps):
         drop_last=False, collate_fn=collate_fn)
 
   net_g = SynthesizerTrn(
-      len(symbols),
+      224, # aishell3 total phonemes numbers
       hps.data.filter_length // 2 + 1,
       hps.train.segment_size // hps.data.hop_length,
       n_speakers=hps.data.n_speakers,
